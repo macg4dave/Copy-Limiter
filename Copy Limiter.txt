@@ -1,0 +1,168 @@
+property rsync_file_path : null
+property rsync_file_save : null
+property net_speed_num : null
+
+process_main_loop()
+--Program Load
+
+on process_main_loop()
+	
+	clear_lists()
+	
+	set rsync_file_path to rsync_dia("Select source folder")
+	
+	set rsync_file_save to rsync_dia("Select destination folder")
+	
+	get_net_speed()
+	
+	cur_working_file(rsync_file_path)
+	
+end process_main_loop
+
+-- Load End
+
+on clear_lists()
+	
+	set rsync_file_path to null
+	set rsync_file_save to null
+	set net_speed_num to null
+	
+end clear_lists
+
+
+on rsync_dia(dialog_text)
+	try
+		
+		set rsync_input_dia to choose folder with prompt dialog_text
+		
+		set rsync_input_fix to quoted form of POSIX path of rsync_input_dia
+		
+		set file_path to rsync_input_fix
+		
+		return file_path
+		
+	on error
+		-- User canceled
+		return missing value
+	end try
+end rsync_dia
+
+
+
+on get_net_speed()
+	
+	set check_done to false
+	
+	repeat while check_done is false
+		
+		try
+			display dialog "How many kB/s would you like to limit the copy?" default answer "700" buttons {"Cancel", "Ok"} default button "Ok"
+			set net_speed to result
+			set net_speed_num to text returned of net_speed
+		on error
+			-- User canceled
+			return missing value
+		end try
+		
+		try
+			set num_check to do shell script " [[ " & net_speed_num & " =~ ^[0-9]+$ ]] && echo 'good' || echo 'bad' "
+		on error
+			set error_net_speed to display dialog "Please give a whole number" buttons {"Cancel", "Ok"} default button "Ok"
+		end try
+		
+		try
+			if num_check is "bad" then
+				
+				set error_net_speed to display dialog "Please give a whole number" buttons {"Cancel", "Ok"} default button "Ok"
+			else
+				set check_done to true
+				
+			end if
+			
+		on error
+			-- User canceled
+			return missing value
+		end try
+		
+	end repeat
+	
+end get_net_speed
+
+
+
+on make_terminal_window(input_win_name)
+	
+	tell application "Terminal"
+		
+		set term_tab to do script "echo -n -e '\\033]0;.XxX." & input_win_name & ".XxX.\\007'"
+		set output_term_win to first window of (every window whose tabs contains term_tab)
+		set output_term_win_num to output_term_win's id
+		
+		repeat with i from 1 to the count of output_term_win's tabs
+			
+			if item i of output_term_win's tabs is term_tab then set ffmpeg_tab_num to i
+			
+		end repeat
+		
+		get {output_term_win, output_term_win_num}
+		--set current settings of ffmpeg_tab to settings set "FFMPEGQ100"
+		return output_term_win_num
+		
+	end tell
+	
+end make_terminal_window
+
+
+
+
+on cur_working_file(input_list)
+	
+	set term_win to make_terminal_window("StartCopy")
+	
+	process_term(term_win, rsync_file_path, rsync_file_save, "CopyDone", "CopyError")
+	
+end cur_working_file
+
+
+on process_term(input_win_num, cur_file_item, target_dir, term_done_flag_name, term_error_flag_name)
+	
+	
+	tell application "Terminal"
+		
+		do script "rsync -ah --progress --bwlimit=" & net_speed_num & " " & cur_file_item & " " & target_dir & " && echo -n -e '\\033]0;.XxX." & term_done_flag_name & ".XxX.\\007' || { echo  -n -e '\\033]0;.XxX." & term_error_flag_name & ".XxX.\\007' 1>&2 ; exit 1; }" in window id input_win_num
+		
+	end tell
+	
+	set cur_file_process to false
+	set file_error to false
+	
+	repeat while cur_file_process is false
+		do shell script "sleep 0.5"
+		
+		tell application "Terminal"
+			
+			set win_full_name to name of window id input_win_num
+			set AppleScript's text item delimiters to {".XxX."}
+			set done_error_flag to text item 2 of win_full_name
+			log done_error_flag
+			if done_error_flag is "CopyDone" then
+				set cur_file_process to true
+			end if
+			
+			if done_error_flag is "CopyError" then
+				set cur_file_process to true
+				set file_error to true
+			end if
+			
+		end tell
+	end repeat
+	
+	if file_error is false then
+		display notification "Rsync complete"
+	end if
+	
+	if file_error is true then
+		display notification "Rsync Error"
+	end if
+	
+end process_term
